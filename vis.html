@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>MPU6050 Live Data Stream</title>
+  <style>
+    body {
+      background: #0e0e0e;
+      color: #fff;
+      font-family: monospace;
+      padding: 20px;
+    }
+    h2 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: limegreen;
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+  <h2>MPU6050 Live Data Stream <span id="dot" class="dot"></span></h2>
+  <pre id="output"></pre>
+
+  <script>
+    const ws = new WebSocket("ws://localhost:8000/ws/live");
+    const output = document.getElementById("output");
+    const dot = document.getElementById("dot");
+
+    ws.onopen = () => {
+      output.textContent += "Connected to WebSocket...\n";
+      dot.style.background = "limegreen";
+    };
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === "mpu_data") {
+        const d = msg.data;
+        // Display on screen
+        const line = `ax=${d.ax.toFixed(3)} ay=${d.ay.toFixed(3)} az=${d.az.toFixed(3)} | ` +
+                     `gx=${d.gx.toFixed(1)} gy=${d.gy.toFixed(1)} gz=${d.gz.toFixed(1)} | ` +
+                     `temp=${d.temp.toFixed(1)}\n`;
+        output.textContent = line + output.textContent.slice(0, 2000); // keep recent data only
+      } else {
+        console.log("Other msg:", msg);
+      }
+    };
+
+    ws.onerror = (err) => console.error("WebSocket error:", err);
+    ws.onclose = () => {
+      dot.style.background = "red";
+      output.textContent += "\nDisconnected from WebSocket.";
+    };
+  </script>
+</body>
+</html>

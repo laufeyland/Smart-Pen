@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MPU6050 Drawable Live Path</title>
+  <style>
+    body {
+      background: #0e0e0e;
+      color: #fff;
+      font-family: monospace;
+      margin: 0;
+      overflow: hidden;
+    }
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.6);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    canvas {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      cursor: crosshair;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">Connecting...</div>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const ws = new WebSocket("ws://localhost:8000/ws/live");
+    const info = document.getElementById("info");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
+
+    // Drawing state
+    let x = canvas.width / 2;
+    let y = canvas.height / 2;
+    let vx = 0, vy = 0;
+    const trail = [];
+
+    // Settings
+    const damping = 0.95;   // smooth out motion
+    const scale = 5;        // sensitivity (bigger = faster movement)
+    const maxTrail = 300;   // number of points to keep
+
+    // Draw loop
+    function draw() {
+      ctx.fillStyle = "rgba(14,14,14,0.15)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.beginPath();
+      for (let i = 0; i < trail.length; i++) {
+        const t = trail[i];
+        ctx.lineTo(t.x, t.y);
+      }
+      ctx.strokeStyle = "#00ffb3";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // current point
+      ctx.fillStyle = "#ff0077";
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      requestAnimationFrame(draw);
+    }
+
+    // WebSocket
+    ws.onopen = () => {
+      info.textContent = "Connected to MPU6050 feed";
+      info.style.color = "limegreen";
+    };
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type !== "mpu_data") return;
+
+      const { ax, ay } = msg.data;
+
+      // Simple integration → position
+      vx += ax * scale;
+      vy += ay * scale;
+
+      x += vx;
+      y += vy;
+
+      // damping (simulate friction)
+      vx *= damping;
+      vy *= damping;
+
+      // boundaries
+      if (x < 0) x = 0;
+      if (x > canvas.width) x = canvas.width;
+      if (y < 0) y = 0;
+      if (y > canvas.height) y = canvas.height;
+
+      trail.push({ x, y });
+      if (trail.length > maxTrail) trail.shift();
+    };
+
+    ws.onclose = () => {
+      info.textContent = "Disconnected";
+      info.style.color = "red";
+    };
+
+    draw();
+  </script>
+</body>
+</html>
