@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -28,6 +29,7 @@ class MPUData(BaseModel):
 class LabelRequest(BaseModel):
     shape: str
     quality: str
+    hand: str
     filename: str  # raw file to move
 
 # ---------------- Globals ----------------
@@ -39,6 +41,7 @@ csv_writer = None
 connected_clients: list[WebSocket] = []     # dashboard clients
 pen_socket: WebSocket | None = None         # ESP32 pen connection
 pen_state = "offline"
+last_seen = None
 
 BASE_DIR = "sessions"
 RAW_DIR = os.path.join(BASE_DIR, "raw")
@@ -105,11 +108,25 @@ async def start_recording(request: Request, shape: str = Form(None)):
 
     return {"message": f"Recording started for shape '{shape}'", "filename": current_filename}
 
+async def monitor_pen_offline():
+    global pen_state, last_seen
+    while True:
+        await asyncio.sleep(1)
+        if last_seen is not None:
+            if datetime.now().timestamp() - last_seen > 3:
+                if pen_state != "offline":
+                    pen_state = "offline"
+
+
 @app.post("/data")
 async def receive_data(data: MPUData):
     """Receive MPU6050 data, write to CSV, and broadcast."""
     global recording, csv_writer, csv_file
-
+    #Set the Pen status to online when data is received
+    global pen_state, last_seen
+    pen_state = "online"
+    last_seen = datetime.now().timestamp()  # update last seen timestamp
+    
     if not recording or csv_writer is None:
         return {"status": "ignored", "reason": "not recording"}
 
@@ -156,13 +173,14 @@ async def stop_recording():
 
 @app.post("/label_session")
 async def label_session(req: LabelRequest):
-    """Label a raw session and move it to labeled/<shape>/<quality>/."""
+    """Label a raw session and move it to labeled/<shape>/<quality>/<hand>."""
     shape = req.shape.capitalize()
     quality = req.quality.capitalize()
+    hand = req.hand.capitalize()
     src_path = os.path.join(RAW_DIR, req.filename)
     if not os.path.exists(src_path):
         return {"error": f"File not found: {req.filename}"}
-    dest_dir = os.path.join(LABELED_DIR, shape, quality)
+    dest_dir = os.path.join(LABELED_DIR, shape, quality, hand)
     ensure_dir(dest_dir)
     dest_path = os.path.join(dest_dir, req.filename)
     shutil.move(src_path, dest_path)
@@ -185,27 +203,6 @@ async def ws_live(websocket: WebSocket):
     except WebSocketDisconnect:
         connected_clients.remove(websocket)
 
-# ---------------- WebSocket: Pen Device ----------------
-@app.websocket("/ws/pen")
-async def ws_pen(websocket: WebSocket):
-    """
-    WebSocket connection from the pen (ESP32).
-    It can send JSON data or simple keep-alives.
-    """
-    global pen_socket, pen_state
-    pen_socket = websocket
-    pen_state = "connected"
-    await websocket.accept()
-    await broadcast({"type": "pen_state", "state": pen_state})
-    print("Pen connected")
-
-    try:
-        while True:
-            msg = await websocket.receive_text()
-            # Optionally forward messages or handle commands
-            print(f"[PEN] {msg}")
-    except WebSocketDisconnect:
-        pen_state = "offline"
-        pen_socket = None
-        await broadcast({"type": "pen_state", "state": pen_state})
-        print("Pen disconnected")
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(monitor_pen_offline())

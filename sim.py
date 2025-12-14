@@ -26,7 +26,7 @@ def simulate_mpu_data():
     }
 
 def main():
-    print("🧠 Simulating MPU6050 data stream...")
+    print("Simulating MPU6050 data stream...")
     while True:
         data = simulate_mpu_data()
         try:
